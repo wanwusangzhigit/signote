@@ -1,7 +1,7 @@
 name = "signote"
 main = "src/index.js"
 compatibility_date = "2024-09-23"
-# account_id = "your-cloudflare-account-id"
+account_id = "93767a366115cff85216a3fe7d6e62e5"
 
 # Custom domain (optional)
 # routes = [
@@ -12,7 +12,7 @@ compatibility_date = "2024-09-23"
 [[d1_databases]]
 binding = "DB"
 database_name = "note-ms"
-database_id = "your-d1-database-id"
+database_id = "4f083b79-1ceb-4c81-b216-196337c61f7f"
 
 # Migrations live in ./migrations (default). Apply with:
 #   wrangler d1 migrations apply note-ms --remote

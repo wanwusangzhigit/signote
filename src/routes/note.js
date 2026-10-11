@@ -337,6 +337,40 @@ function mdToHtml(src, S) {
       continue;
     }
 
+    // --- block math $$...$$ ---
+    const blockMathFull = line.match(/^\s*\$\$(.*)\$\$\s*$/);
+    const blockMathStart = line.match(/^\s*\$\$\s*$/);
+    if (blockMathFull || blockMathStart) {
+      const mathLines = [];
+      if (blockMathFull) {
+        mathLines.push(blockMathFull[1]);
+      } else {
+        i++;
+        while (i < lines.length && !lines[i].match(/^\s*\$\$\s*$/)) {
+          mathLines.push(lines[i]);
+          i++;
+        }
+        i++; // skip closing $$
+      }
+      let mathContent = mathLines.join('\n');
+      mathContent = esc(mathContent);
+      // LaTeX line breaks \\ → <br/>
+      mathContent = mathContent.replace(/\\\\\s*\n/g, '<br/>');
+      mathContent = mathContent.replace(/\\\\$/gm, '<br/>');
+      // Empty lines → paragraph break
+      mathContent = mathContent.replace(/\n{2,}/g, '<br/><br/>');
+      // Remaining newlines → <br/>
+      mathContent = mathContent.replace(/\n/g, '<br/>');
+      // User-written <br> tags (escaped as &lt;br&gt;) → <br/>
+      mathContent = mathContent.replace(/&lt;br\s*\/?&gt;/gi, '<br/>');
+
+      const mathBg = S._isDark ? '#161b22' : '#f6f8fa';
+      const mathBorder = S._isDark ? '#30363d' : '#e5e7eb';
+      const mathFg = S._isDark ? '#c9d1d9' : '#1f2328';
+      html += `<div style="text-align:center;margin:1em 0;padding:12px 16px;background:${mathBg};border:1px solid ${mathBorder};border-radius:6px;font-family:'Times New Roman',Georgia,'Noto Serif SC',serif;font-size:1.05em;line-height:1.9;color:${mathFg};white-space:normal;">${mathContent}</div>`;
+      continue;
+    }
+
     // --- blank line ---
     if (line.trim() === '') { i++; continue; }
 
@@ -395,7 +429,8 @@ function mdToHtml(src, S) {
     while (i < lines.length && lines[i].trim() !== '' &&
       !lines[i].match(/^```/) && !lines[i].match(/^(#{1,6})\s/) &&
       !lines[i].match(/^>\s?/) && !lines[i].match(/^[-*+]\s/) &&
-      !lines[i].match(/^\d+\.\s/) && !/^(-{3,}|\*{3,}|_{3,})\s*$/.test(lines[i])) {
+      !lines[i].match(/^\d+\.\s/) && !/^(-{3,}|\*{3,}|_{3,})\s*$/.test(lines[i]) &&
+      !lines[i].match(/^\s*\$\$/)) {
       paraLines.push(lines[i]);
       i++;
     }
@@ -406,10 +441,24 @@ function mdToHtml(src, S) {
   return html;
 }
 
-/** Inline markdown: code, bold, italic, links. Uses inline styles. */
+/** Inline markdown: code, bold, italic, links, inline math. Uses inline styles. */
 function inlineMd(s, S) {
   const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  let r = esc(s);
+
+  // Handle inline math $...$ BEFORE escaping, to extract raw math content
+  // Use placeholder so escape doesn't affect it, and we restore styling after.
+  let r = s.replace(/(?<!\$)\$(?!\$)([^$\n]+?)(?<!\$)\$(?!\$)/g, (_, math) => {
+    let mc = math.replace(/\\\n/g, '<br/>');
+    return `__INLINE_MATH__${esc(mc)}__END_INLINE_MATH__`;
+  });
+
+  r = esc(r);
+
+  // Restore inline math with serif font styling
+  const mathFg = S._isDark ? '#c9d1d9' : '#1f2328';
+  r = r.replace(/__INLINE_MATH__(.+?)__END_INLINE_MATH__/g,
+    `<span style="font-family:'Times New Roman',Georgia,'Noto Serif SC',serif;font-style:italic;color:${mathFg};">$1</span>`);
+
   // inline code
   r = r.replace(/`([^`]+)`/g, (_, c) => `<code style="${S.inlineCode}">${c}</code>`);
   // bold
