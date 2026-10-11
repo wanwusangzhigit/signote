@@ -1,0 +1,21 @@
+name = "signote"
+main = "src/index.js"
+compatibility_date = "2024-09-23"
+# account_id = "your-cloudflare-account-id"
+
+# Custom domain (optional)
+# routes = [
+#   { pattern = "your-domain.com", custom_domain = true },
+# ]
+
+# D1 database binding. Created with: wrangler d1 create note-ms
+[[d1_databases]]
+binding = "DB"
+database_name = "note-ms"
+database_id = "your-d1-database-id"
+
+# Migrations live in ./migrations (default). Apply with:
+#   wrangler d1 migrations apply note-ms --remote
+
+# Optional admin password. Set via: wrangler secret put ADMIN_PASSWORD
+# If unset, the admin panel is disabled.

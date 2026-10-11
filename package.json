@@ -1,0 +1,18 @@
+{
+  "name": "note-ms",
+  "version": "1.0.0",
+  "description": "A lightweight note.ms-style service on Cloudflare Workers + D1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:create": "wrangler d1 create note-ms",
+    "db:migrate": "wrangler d1 migrations apply note-ms --remote",
+    "db:migrate:local": "wrangler d1 migrations apply note-ms",
+    "db:new": "wrangler d1 migrations create note-ms"
+  },
+  "devDependencies": {
+    "wrangler": "^3.78.0"
+  }
+}

@@ -1,0 +1,11 @@
+node_modules/
+.wrangler/
+.dev.vars
+*.log
+.DS_Store
+
+# Keep wrangler.toml (contains only placeholders, real secrets via `wrangler secret put`)
+# Do NOT commit .env files
+.env
+.env.*
+
