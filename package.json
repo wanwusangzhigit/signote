@@ -3,6 +3,11 @@
   "version": "1.0.0",
   "description": "A lightweight note.ms-style service on Cloudflare Workers + D1",
   "private": true,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/wanwusangzhigit/signote.git"
+  },
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
