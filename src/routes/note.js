@@ -307,16 +307,79 @@ function langExt(lang) {
   return m[lang] || null;
 }
 
+// ---- SVG layout measurement ----
+// SVG is rendered server-side without a DOM, so the final height must be
+// estimated from the content. These helpers approximate text wrapping using
+// per-character width ratios so long notes are never clipped.
+
+/** Fixed SVG width and inner content width (padding 20px on each side). */
+const SVG_W = 820;
+const SVG_PAD = 20;
+const CONTENT_W = SVG_W - SVG_PAD * 2;
+
+/** Approximate the rendered advance width of a character at a font size. */
+function charWidth(ch, fontSize) {
+  const cp = ch.codePointAt(0);
+  const wide =
+    (cp >= 0x1100 && cp <= 0x115f) ||   // Hangul Jamo
+    (cp >= 0x2e80 && cp <= 0xa4cf) ||   // CJK radicals .. Yi
+    (cp >= 0xac00 && cp <= 0xd7a3) ||   // Hangul syllables
+    (cp >= 0xf900 && cp <= 0xfaff) ||   // CJK compatibility ideographs
+    (cp >= 0xfe30 && cp <= 0xfe6f) ||   // CJK compatibility forms
+    (cp >= 0xff00 && cp <= 0xff60) ||   // Fullwidth forms
+    (cp >= 0xffe0 && cp <= 0xffe6) ||
+    (cp >= 0x1f300 && cp <= 0x1faff);   // Emoji
+  if (wide) return fontSize;
+  if (ch === '\t') return fontSize * 2;
+  if (ch === ' ') return fontSize * 0.28;
+  if (/[.,:;'!|ijl]/.test(ch)) return fontSize * 0.28;
+  if (/[MW@%]/.test(ch)) return fontSize * 0.85;
+  return fontSize * 0.53;
+}
+
+/** Strip HTML tags for measurement; block-level breaks become newlines. */
+function plainText(html) {
+  return String(html)
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<[^>]*>/g, '')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&');
+}
+
+/** Estimate how many wrapped lines a block of text occupies. */
+function countLines(text, fontSize, availW) {
+  const plain = plainText(text);
+  if (plain === '') return 1;
+  let total = 0;
+  for (const raw of plain.split('\n')) {
+    if (raw === '') { total += 1; continue; }
+    let cur = 0;
+    let n = 1;
+    for (const ch of raw) {
+      const cw = charWidth(ch, fontSize);
+      if (cur + cw > availW && cur > 0) { n++; cur = cw; } else cur += cw;
+    }
+    total += n;
+  }
+  return Math.max(1, total);
+}
+
 /**
  * Server-side Markdown → HTML renderer with inline styles (for SVG foreignObject).
  * SVG loaded as an image ignores <style> tags, so every element must have
- * inline styles. Preserves whitespace in code blocks via white-space:pre.
+ * inline styles. Preserves whitespace in code blocks via white-space:pre-wrap.
+ * Returns { html, height } where height is the estimated rendered height in px.
  */
 function mdToHtml(src, S) {
   const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
   const lines = src.split('\n');
   let html = '';
+  let height = 0;
   let i = 0;
 
   while (i < lines.length) {
@@ -332,8 +395,12 @@ function mdToHtml(src, S) {
         i++;
       }
       i++; // skip closing ```
-      const code = highlightCode(codeLines.join('\n'), fence[1] || '', S._isDark);
+      const rawCode = codeLines.join('\n');
+      const code = highlightCode(rawCode, fence[1] || '', S._isDark);
+      // pre: 14px padding, 1px border each side, 13px monospace, line-height 1.5
+      const codeWidth = CONTENT_W - 32 - 2;
       html += `<pre style="${S.pre}"><code style="${S.code}">${code}</code></pre>`;
+      height += countLines(rawCode, 13, codeWidth) * 19.5 + 28 + 2 + 16;
       continue;
     }
 
@@ -368,6 +435,8 @@ function mdToHtml(src, S) {
       const mathBorder = S._isDark ? '#30363d' : '#e5e7eb';
       const mathFg = S._isDark ? '#c9d1d9' : '#1f2328';
       html += `<div style="text-align:center;margin:1em 0;padding:12px 16px;background:${mathBg};border:1px solid ${mathBorder};border-radius:6px;font-family:'Times New Roman',Georgia,'Noto Serif SC',serif;font-size:1.05em;line-height:1.9;color:${mathFg};white-space:normal;">${mathContent}</div>`;
+      // 14.7px font, line-height 1.9, 12px padding, 1px border, 1em (14px) margin each side
+      height += countLines(mathContent, 14.7, CONTENT_W - 32 - 2) * 27.93 + 24 + 2 + 28;
       continue;
     }
 
@@ -379,7 +448,9 @@ function mdToHtml(src, S) {
     if (h) {
       const lvl = h[1].length;
       const hs = S['h' + lvl] || S.h6;
+      const fs = 14 * ({ 1: 1.6, 2: 1.35, 3: 1.15, 4: 1, 5: 0.95, 6: 0.9 })[lvl];
       html += `<h${lvl} style="${hs}">${inlineMd(h[2], S)}</h${lvl}>`;
+      height += countLines(h[2], fs, CONTENT_W) * fs * 1.3 + fs * 1.2;
       i++;
       continue;
     }
@@ -387,6 +458,7 @@ function mdToHtml(src, S) {
     // --- horizontal rule ---
     if (/^(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) {
       html += `<hr style="${S.hr}"/>`;
+      height += 29; // 1px border + 1em margin top/bottom
       i++;
       continue;
     }
@@ -398,29 +470,39 @@ function mdToHtml(src, S) {
         quoteLines.push(lines[i].replace(/^>\s?/, ''));
         i++;
       }
-      html += `<blockquote style="${S.blockquote}">${inlineMd(quoteLines.join(' '), S)}</blockquote>`;
+      const quoteText = quoteLines.join(' ');
+      html += `<blockquote style="${S.blockquote}">${inlineMd(quoteText, S)}</blockquote>`;
+      height += countLines(quoteText, 14, CONTENT_W - 17) * 23.8 + 7;
       continue;
     }
 
     // --- unordered list ---
     if (line.match(/^[-*+]\s+/)) {
       const items = [];
+      let listHeight = 0;
       while (i < lines.length && lines[i].match(/^[-*+]\s+/)) {
-        items.push(`<li style="${S.li}">${inlineMd(lines[i].replace(/^[-*+]\s+/, ''), S)}</li>`);
+        const itemText = lines[i].replace(/^[-*+]\s+/, '');
+        items.push(`<li style="${S.li}">${inlineMd(itemText, S)}</li>`);
+        listHeight += countLines(itemText, 14, CONTENT_W - 21) * 22.4 + 3.5;
         i++;
       }
       html += `<ul style="${S.ul}">${items.join('')}</ul>`;
+      height += listHeight + 7;
       continue;
     }
 
     // --- ordered list ---
     if (line.match(/^\d+\.\s+/)) {
       const items = [];
+      let listHeight = 0;
       while (i < lines.length && lines[i].match(/^\d+\.\s+/)) {
-        items.push(`<li style="${S.li}">${inlineMd(lines[i].replace(/^\d+\.\s+/, ''), S)}</li>`);
+        const itemText = lines[i].replace(/^\d+\.\s+/, '');
+        items.push(`<li style="${S.li}">${inlineMd(itemText, S)}</li>`);
+        listHeight += countLines(itemText, 14, CONTENT_W - 21) * 22.4 + 3.5;
         i++;
       }
       html += `<ol style="${S.ol}">${items.join('')}</ol>`;
+      height += listHeight + 7;
       continue;
     }
 
@@ -435,10 +517,12 @@ function mdToHtml(src, S) {
       i++;
     }
     if (paraLines.length) {
-      html += `<p style="${S.p}">${inlineMd(paraLines.join('<br/>'), S)}</p>`;
+      const paraHtml = inlineMd(paraLines.join('<br/>'), S);
+      html += `<p style="${S.p}">${paraHtml}</p>`;
+      height += countLines(paraLines.join('\n'), 14, CONTENT_W) * 23.8 + 7;
     }
   }
-  return html;
+  return { html, height };
 }
 
 /** Inline markdown: code, bold, italic, links, inline math. Uses inline styles. */
@@ -619,7 +703,7 @@ function mdToSvg(text, id, bg, lang) {
 
   const S = {
     _isDark: isDark,
-    pre: `margin:8px 0;padding:14px 16px;background:${codeBg};border:1px solid ${border};border-radius:6px;overflow:hidden;white-space:pre;font-size:13px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;line-height:1.5;`,
+    pre: `margin:8px 0;padding:14px 16px;background:${codeBg};border:1px solid ${border};border-radius:6px;white-space:pre-wrap;overflow-wrap:break-word;font-size:13px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;line-height:1.5;`,
     code: `font-family:inherit;font-size:inherit;color:inherit;background:transparent;`,
     inlineCode: `font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:${codeBg};padding:1px 6px;border-radius:4px;font-size:.9em;`,
     h1: `font-size:1.6em;font-weight:600;margin:.8em 0 .4em;line-height:1.3;color:${fg};`,
@@ -639,21 +723,30 @@ function mdToSvg(text, id, bg, lang) {
     em: `font-style:italic;color:${fg};`,
   };
 
-  // Build the inner HTML content
+  // Build the inner HTML content and its estimated height.
   let innerHtml;
+  let contentHeight;
   if (lang && lang !== 'markdown') {
-    innerHtml = `<pre style="${S.pre}"><code style="${S.code}">${highlightCode(text, lang, isDark)}</code></pre>`;
+    const rawCode = text;
+    innerHtml = `<pre style="${S.pre}"><code style="${S.code}">${highlightCode(rawCode, lang, isDark)}</code></pre>`;
+    contentHeight = countLines(rawCode, 13, CONTENT_W - 32 - 2) * 19.5 + 28 + 2 + 16;
   } else {
-    innerHtml = mdToHtml(text, S);
+    const rendered = mdToHtml(text, S);
+    innerHtml = rendered.html;
+    contentHeight = rendered.height;
   }
 
   const headerBar = `<div style="padding:8px 16px;background:${codeBg};border-bottom:1px solid ${border};font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;color:${muted};">signote/${escapeHtml(id)}</div>`;
   const bgRect = bg ? `<rect width="100%" height="100%" fill="${escapeHtml(bg)}"/>` : '';
 
-  const w = 820;
-  const h = 1200;
+  const w = SVG_W;
+  // Height grows with the content so nothing is clipped. The +1% covers
+  // rounding differences between the estimate and the actual browser layout.
+  const HEADER_H = 32; // 16px padding + ~13px text + 1px border + 2px slack
+  const contentBox = contentHeight * 1.01 + SVG_PAD * 2;
+  const h = Math.max(120, Math.ceil(HEADER_H + contentBox));
   const wrapperStyle = `width:${w}px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:14px;line-height:1.7;color:${fg};`;
-  const contentStyle = `padding:20px;white-space:pre-wrap;word-wrap:break-word;`;
+  const contentStyle = `padding:${SVG_PAD}px;white-space:pre-wrap;word-wrap:break-word;`;
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
   ${bgRect}
