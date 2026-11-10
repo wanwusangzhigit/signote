@@ -92,8 +92,8 @@ export function notePage(meta, lang) {
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>${titleTag}</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%231a1a1a'/%3E%3Crect x='9' y='7' width='14' height='18' rx='2' stroke='%23fff' stroke-width='1.5' fill='none'/%3E%3Cpath d='M12 12h8M12 16h8M12 20h5' stroke='%23fff' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11/styles/github.min.css">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+<link rel="stylesheet" href="https://fastly.jsdelivr.net/npm/highlight.js@11/styles/github.min.css">
+<link rel="stylesheet" href="https://fastly.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
 <style>
   :root { --bg:#fafafa; --fg:#1a1a1a; --muted:#6b7280; --accent:#2563eb; --card:#fff; --border:#e5e7eb; --code:#f6f8fa; --danger:#dc2626; --ok:#16a34a; }
   * { box-sizing: border-box; }
@@ -233,10 +233,10 @@ export function notePage(meta, lang) {
   </div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/highlight.js@11/build/highlight.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+<script src="https://fastly.jsdelivr.net/npm/marked@12/marked.min.js"></script>
+<script src="https://fastly.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
+<script src="https://fastly.jsdelivr.net/gh/highlightjs/cdn-release@11/build/highlight.min.js"></script>
+<script src="https://fastly.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
 <script>
 const META = ${escapeJs(metaJson)};
 const T = ${escapeJs(JSON.stringify(t))};
@@ -276,13 +276,24 @@ function renderPreview(){
   const PH = (i) => 'XKXKmath' + i + 'XKXK';
   const reDisplay = new RegExp('\\\\\\$\\\\\\$([\\\\s\\\\S]+?)\\\\\\$\\\\\\$', 'g');
   const reInline = new RegExp('\\\\\\$([^\\\\n$]+?)\\\\\\$', 'g');
-  // display math first ($$...$$)
+  // \[...\] display math and \(...\) inline math (common LaTeX delimiters).
+  const reDisplayBracket = new RegExp('\\\\\\\\\\\\[([\\\\s\\\\S]+?)\\\\\\\\\\\\]', 'g');
+  const reInlineParen = new RegExp('\\\\\\\\\\\\(([\\\\s\\\\S]+?)\\\\\\\\\\\\)', 'g');
+  // display math first ($$...$$ and \[...\])
   src = src.replace(reDisplay, (_, body) => {
     mathBlocks.push({ display: true, body });
     return PH(mathBlocks.length - 1);
   });
-  // inline math ($...$)
+  src = src.replace(reDisplayBracket, (_, body) => {
+    mathBlocks.push({ display: true, body });
+    return PH(mathBlocks.length - 1);
+  });
+  // inline math ($...$ and \(...\))
   src = src.replace(reInline, (_, body) => {
+    mathBlocks.push({ display: false, body });
+    return PH(mathBlocks.length - 1);
+  });
+  src = src.replace(reInlineParen, (_, body) => {
     mathBlocks.push({ display: false, body });
     return PH(mathBlocks.length - 1);
   });
@@ -300,14 +311,21 @@ function renderPreview(){
     let node;
     const token = PH(i);
     while ((node = walker.nextNode())) {
-      if (node.nodeValue.includes(token)) {
-        const span = document.createElement(m.display ? 'div' : 'span');
-        if (m.display) span.style.textAlign = 'center';
-        try { katex.render(m.body, span, { displayMode: m.display, throwOnError: false }); }
-        catch(e) { span.textContent = m.body; }
-        node.parentNode.replaceChild(span, node);
-        break;
-      }
+      const idx = node.nodeValue.indexOf(token);
+      if (idx === -1) continue;
+      // Split the text node so surrounding text and later placeholders survive.
+      const before = node.nodeValue.slice(0, idx);
+      const after = node.nodeValue.slice(idx + token.length);
+      const span = document.createElement('span');
+      if (m.display) { span.style.display = 'block'; span.style.textAlign = 'center'; }
+      try { katex.render(m.body, span, { displayMode: m.display, throwOnError: false }); }
+      catch(e) { span.textContent = m.body; }
+      const frag = document.createDocumentFragment();
+      if (before) frag.appendChild(document.createTextNode(before));
+      frag.appendChild(span);
+      if (after) frag.appendChild(document.createTextNode(after));
+      node.parentNode.replaceChild(frag, node);
+      break;
     }
   });
 }

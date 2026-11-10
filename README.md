@@ -22,7 +22,7 @@
 |---|---|
 | 📝 **Markdown everywhere** | Full Markdown rendering with headings, lists, quotes, tables, links, and inline formatting. |
 | 🎨 **Syntax highlighting** | A dependency-free server-side highlighter covering **15+ languages** (JS, TS, Python, Go, Rust, Java, C/C++, C#, PHP, Ruby, Bash, SQL, CSS, JSON, YAML). |
-| ∑ **KaTeX math** | Block (`$$ … $$`) and inline (`$ … $`) math, rendered consistently in both the web preview and the exported image. |
+| ∑ **KaTeX math** | Block (`$$ … $$`, `\[ … \]`) and inline (`$ … $`, `\( … \)`) math, rendered consistently in both the web preview and the exported image. |
 | 🖼️ **SVG image export** | Every note can be exported as a self-contained SVG image via `/img` — ideal for embedding in READMEs, chats, and docs. Transparent by default, or pass a custom `bg` color. |
 | 🔗 **Share it your way** | Human-readable case-insensitive IDs. Create via the web editor or straight from your terminal with `curl`. |
 | 🔒 **Privacy controls** | Per-note **password**, **read-only** mode, and **TTL** (auto-expiry, max 30 days). Expired notes become inaccessible but are never destroyed. |

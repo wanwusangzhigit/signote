@@ -318,7 +318,7 @@ const SVG_PAD = 20;
 const CONTENT_W = SVG_W - SVG_PAD * 2;
 
 /** Approximate the rendered advance width of a character at a font size. */
-function charWidth(ch, fontSize) {
+function charWidth(ch, fontSize, mono = false) {
   const cp = ch.codePointAt(0);
   const wide =
     (cp >= 0x1100 && cp <= 0x115f) ||   // Hangul Jamo
@@ -331,6 +331,7 @@ function charWidth(ch, fontSize) {
     (cp >= 0x1f300 && cp <= 0x1faff);   // Emoji
   if (wide) return fontSize;
   if (ch === '\t') return fontSize * 2;
+  if (mono) return fontSize * 0.6;      // monospace advance width
   if (ch === ' ') return fontSize * 0.28;
   if (/[.,:;'!|ijl]/.test(ch)) return fontSize * 0.28;
   if (/[MW@%]/.test(ch)) return fontSize * 0.85;
@@ -341,7 +342,9 @@ function charWidth(ch, fontSize) {
 function plainText(html) {
   return String(html)
     .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<[^>]*>/g, '')
+    // Never let a tag match span lines: raw '<' in text (e.g. "a < b") must
+    // not swallow everything up to a later '>' on another line.
+    .replace(/<[^>\n]*>/g, '')
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"')
@@ -351,16 +354,16 @@ function plainText(html) {
 }
 
 /** Estimate how many wrapped lines a block of text occupies. */
-function countLines(text, fontSize, availW) {
-  const plain = plainText(text);
+function countLines(text, fontSize, availW, { raw = false, mono = false } = {}) {
+  const plain = raw ? String(text) : plainText(text);
   if (plain === '') return 1;
   let total = 0;
-  for (const raw of plain.split('\n')) {
-    if (raw === '') { total += 1; continue; }
+  for (const line of plain.split('\n')) {
+    if (line === '') { total += 1; continue; }
     let cur = 0;
     let n = 1;
-    for (const ch of raw) {
-      const cw = charWidth(ch, fontSize);
+    for (const ch of line) {
+      const cw = charWidth(ch, fontSize, mono);
       if (cur + cw > availW && cur > 0) { n++; cur = cw; } else cur += cw;
     }
     total += n;
@@ -400,24 +403,27 @@ function mdToHtml(src, S) {
       // pre: 14px padding, 1px border each side, 13px monospace, line-height 1.5
       const codeWidth = CONTENT_W - 32 - 2;
       html += `<pre style="${S.pre}"><code style="${S.code}">${code}</code></pre>`;
-      height += countLines(rawCode, 13, codeWidth) * 19.5 + 28 + 2 + 16;
+      height += countLines(rawCode, 13, codeWidth, { raw: true, mono: true }) * 19.5 + 28 + 2 + 16;
       continue;
     }
 
-    // --- block math $$...$$ ---
-    const blockMathFull = line.match(/^\s*\$\$(.*)\$\$\s*$/);
-    const blockMathStart = line.match(/^\s*\$\$\s*$/);
+    // --- block math: $$...$$ or \[...\] ---
+    const blockMathFull = line.match(/^\s*\$\$(.*)\$\$\s*$/) ||
+                          line.match(/^\s*\\\[([\s\S]*?)\\\]\s*$/);
+    const blockMathStart = line.match(/^\s*(\$\$|\\\[)\s*$/);
     if (blockMathFull || blockMathStart) {
       const mathLines = [];
       if (blockMathFull) {
         mathLines.push(blockMathFull[1]);
       } else {
+        // Close with the same delimiter that opened the block.
+        const closer = blockMathStart[1] === '\\[' ? /^\s*\\\]\s*$/ : /^\s*\$\$\s*$/;
         i++;
-        while (i < lines.length && !lines[i].match(/^\s*\$\$\s*$/)) {
+        while (i < lines.length && !closer.test(lines[i])) {
           mathLines.push(lines[i]);
           i++;
         }
-        i++; // skip closing $$
+        i++; // skip closing delimiter
       }
       let mathContent = mathLines.join('\n');
       mathContent = esc(mathContent);
@@ -512,7 +518,7 @@ function mdToHtml(src, S) {
       !lines[i].match(/^```/) && !lines[i].match(/^(#{1,6})\s/) &&
       !lines[i].match(/^>\s?/) && !lines[i].match(/^[-*+]\s/) &&
       !lines[i].match(/^\d+\.\s/) && !/^(-{3,}|\*{3,}|_{3,})\s*$/.test(lines[i]) &&
-      !lines[i].match(/^\s*\$\$/)) {
+      !lines[i].match(/^\s*\$\$/) && !lines[i].match(/^\s*\\\[/)) {
       paraLines.push(lines[i]);
       i++;
     }
@@ -529,11 +535,12 @@ function mdToHtml(src, S) {
 function inlineMd(s, S) {
   const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
-  // Handle inline math $...$ BEFORE escaping, to extract raw math content
-  // Use placeholder so escape doesn't affect it, and we restore styling after.
-  let r = s.replace(/(?<!\$)\$(?!\$)([^$\n]+?)(?<!\$)\$(?!\$)/g, (_, math) => {
+  // Handle inline math \(...\) and $...$ BEFORE escaping, to extract raw math content.
+  // Use placeholders so the outer escape pass handles the math text exactly once.
+  let r = s.replace(/\\\(([\s\S]+?)\\\)/g, (_, math) => `__INLINE_MATH__${math}__END_INLINE_MATH__`);
+  r = r.replace(/(?<!\$)\$(?!\$)([^$\n]+?)(?<!\$)\$(?!\$)/g, (_, math) => {
     let mc = math.replace(/\\\n/g, '<br/>');
-    return `__INLINE_MATH__${esc(mc)}__END_INLINE_MATH__`;
+    return `__INLINE_MATH__${mc}__END_INLINE_MATH__`;
   });
 
   r = esc(r);
@@ -729,7 +736,7 @@ function mdToSvg(text, id, bg, lang) {
   if (lang && lang !== 'markdown') {
     const rawCode = text;
     innerHtml = `<pre style="${S.pre}"><code style="${S.code}">${highlightCode(rawCode, lang, isDark)}</code></pre>`;
-    contentHeight = countLines(rawCode, 13, CONTENT_W - 32 - 2) * 19.5 + 28 + 2 + 16;
+    contentHeight = countLines(rawCode, 13, CONTENT_W - 32 - 2, { raw: true, mono: true }) * 19.5 + 28 + 2 + 16;
   } else {
     const rendered = mdToHtml(text, S);
     innerHtml = rendered.html;
